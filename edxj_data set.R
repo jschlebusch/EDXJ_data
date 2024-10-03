@@ -1,5 +1,16 @@
 library(readxl)
 library(tidyverse)
+library(mapchina)
+library(sf)
+library(ggplot2)
+library(gifski)
+library(gganimate)
+library(viridis)
+library(ggthemes)
+
+##------------------------------------------------------------------------------
+## PREPARING THE DATA SET
+##------------------------------------------------------------------------------
 
 #reading the excel sheets containing demographic data
 file_list <- list.files(pattern = "^xj_pop.*\\.xlsx$", full.names = TRUE)
@@ -59,8 +70,199 @@ df_xj_diversity <- df_xj_diversity_f %>%
 
 write.csv(df_xj_diversity, "EDXJ_1.0_complete.csv")  
   
+##------------------------------------------------------------------------------
+## VISUALIZATIONS
+##------------------------------------------------------------------------------
   
-  
-  
+#Population development
+df_total <- df_xj_pop_combined %>%
+  group_by(Year) %>%
+  summarize(
+    Uyghur = sum(Uyghur, na.rm = TRUE),  
+    Han = sum(Han, na.rm = TRUE)
+  )
 
+df_long <- df_total %>%
+  pivot_longer(cols = c(Uyghur, Han),
+               names_to = "Ethnic Group",
+               values_to = "Number")
+
+summary(df_long)
+
+df_long <- df_long %>%
+  mutate(Number = na_if(Number, 0))
+
+summary(df_long)
+
+pop_dev_plot <- df_long %>%
+  filter(!is.na(Number)) %>%
+  ggplot(aes(x = Year, y = Number/100000, color = `Ethnic Group`, group = `Ethnic Group`)) +
+  geom_line( ) + 
+  geom_point(aes(shape = `Ethnic Group`),size = 2) +
+  scale_color_manual(values = c("Uyghur" = "red", "Han" = "blue")) + 
+  scale_shape_manual(values = c("Uyghur" = 16, "Han" = 17)) +
+  scale_x_continuous(limits = c(min(df_long$Year), 2015)) +
+  labs(title = "Population development in Xinjiang",
+       x = "Year",
+       y = "Number in 100,000s") +
+  theme_clean() +
+  theme(legend.position = "bottom")
+
+ggsave("xj_pop_dev.png", plot = pop_dev_plot, width = 8, height = 5)
+
+#shapefiles for counties in Xinjiang from the mapchina package
+df_china_sf <- china%>%
+  filter(Name_Province=="新疆维吾尔自治区") %>%
+  select(c(Code_County, geometry)) %>%
+  mutate(Code_County = as.factor(Code_County))
+
+df_xj_diversity <- df_xj_diversity %>%
+  mutate(Code_County = as.factor(Code_County))
+
+map_data <- df_xj_diversity %>%
+  left_join(df_china_sf) %>%
+  mutate(Year = as.numeric(Year)) %>%
+  filter(Year != 2010)
+
+#animated map FRACTIONALIZATION
+map_fractionalization_gif <- ggplot() +
+  geom_sf(data = map_data, aes(fill = Fractionalisation, geometry = geometry)) +
+  scico::scale_fill_scico(palette = "lajolla", na.value = "white") +
+  labs(
+    title = "Ethnic Fractionalization in Xinjiang, {closest_state}",
+    fill = "Degree of Fractionalization",
+    caption = "© Jan Schlebusch 2024"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    plot.caption = element_text(size = 15, hjust = 0.1)
+  ) +
+  transition_states(
+    states = Year,
+    transition_length = 0,
+    state_length = 0.5,
+    wrap = FALSE
+  ) +
+  ease_aes('cubic-in-out')
+
+map_fractionalization_animated <- animate(map_fractionalization_gif, 
+                       renderer = gifski_renderer(), 
+                       duration = 30, 
+                       fps = 20,
+                       width = 800, 
+                       height = 800)
+
+anim_save("xj_fractionalization_map.gif", animation = map_fractionalization_animated)
+
+#animated map POLARIZATION
+map_polarization_gif <- ggplot() +
+  geom_sf(data = map_data, aes(fill = Polarization, geometry = geometry)) +
+  scico::scale_fill_scico(palette = "devon", na.value = "white") +
+  labs(
+    title = "Ethnic Polarization in Xinjiang, {closest_state}",
+    fill = "Degree of Polarization",
+    caption = "© Jan Schlebusch 2024"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    plot.caption = element_text(size = 15, hjust = 0.1)
+  ) +
+  transition_states(
+    states = Year,
+    transition_length = 0,
+    state_length = 0.5,
+    wrap = FALSE
+  ) +
+  ease_aes('cubic-in-out')
+
+map_polarization_animated <- animate(map_polarization_gif, 
+                                          renderer = gifski_renderer(), 
+                                          duration = 30, 
+                                          fps = 20,
+                                          width = 800, 
+                                          height = 800)
+
+anim_save("xj_polarization_map.gif", animation = map_polarization_animated)
+
+#CHANGE 
+df_xj_diversity_ch <- df_xj_diversity %>%
+  group_by(Code_County) %>% 
+  arrange(Code_County, Year) %>%  
+  mutate(Change_Fractionalization = Fractionalisation - lag(Fractionalisation),
+         Change_Fractionalization_Start = Fractionalisation - first(Fractionalisation)) %>%
+  ungroup()
+
+summary(df_xj_diversity_ch$Change_Fractionalization)
+hist(df_xj_diversity_ch$Change_Fractionalization)
+
+map_data_2 <- df_xj_diversity_ch %>%
+  left_join(df_china_sf) %>%
+  mutate(Year = as.numeric(Year)) %>%
+  filter(Year != 2010)
+
+map_fractionalization_change_gif <- ggplot() +
+  geom_sf(data = map_data_2, aes(fill = Change_Fractionalization, geometry = geometry)) +
+  scico::scale_fill_scico(palette = "vik", na.value = "white") +
+  labs(
+    title = "Change in Ethnic Fractionalization in Xinjiang, {closest_state}",
+    fill = "Annual Chnage in Degree of Fractionalization",
+    caption = "© Jan Schlebusch 2024"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    plot.caption = element_text(size = 15, hjust = 0.1)
+  ) +
+  transition_states(
+    states = Year,
+    transition_length = 0,
+    state_length = 0.5,
+    wrap = FALSE
+  ) +
+  ease_aes('cubic-in-out')
+
+map_fractionalization_change_animated <- animate(map_fractionalization_change_gif, 
+                                          renderer = gifski_renderer(), 
+                                          duration = 30, 
+                                          fps = 20,
+                                          width = 800, 
+                                          height = 800)
+
+anim_save("xj_fractionalization_change_map.gif", animation = map_fractionalization_change_animated)
+
+#OVERALL change
+df_overall_change <- df_xj_diversity %>%
+  filter(Year %in% c(2000, 2018)) %>%  # Filter only for the first and last years
+  group_by(Code_County) %>%
+  summarize(
+    First_Fractionalization = Fractionalisation[Year == 2000],
+    Last_Fractionalization = Fractionalisation[Year == 2018],
+    Overall_Change = Last_Fractionalization - First_Fractionalization
+  )  
+  
+map_data_3 <- df_overall_change %>%
+  left_join(df_china_sf)
+
+xj_fractionalization_abschange_map <- ggplot(data = map_data_3) +
+  geom_sf(aes(fill = Overall_Change, geometry = geometry)) + 
+  scico::scale_fill_scico(palette = "cork", na.value = "white") +
+  labs(
+    title = "Change in Ethnic Fractionalization in Xinjiang, 2000-2018",
+    fill = "Absolute Change in Fractionalization"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    plot.caption = element_text(size = 10, hjust = 0.01,),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  ) 
+
+ggsave("xj_fractioalization_abschange_map.png", plot = xj_fractionalization_abschange_map, width = 8, height = 5)
 
